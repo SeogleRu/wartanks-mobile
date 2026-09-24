@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WarTanks Mobile</title>
+    <style>
+        body {
+            margin: 0;
+            background: #222;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background: #557a46;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            max-width: 100%;
+            max-height: 70vh;
+        }
+        .controls {
+            display: none;
+            margin-top: 15px;
+            grid-template-columns: repeat(3, 60px);
+            gap: 10px;
+        }
+        .controls button {
+            height: 60px;
+            font-size: 20px;
+            background: #444;
+            color: white;
+            border: 2px solid #666;
+            border-radius: 10px;
+            outline: none;
+        }
+        .controls button:active {
+            background: #666;
+        }
+        .fire-btn {
+            grid-column: span 3;
+            background: #a00 !important;
+        }
+        @media (pointer: coarse) {
+            .controls { display: grid; }
+        }
+        .score {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+<h1>WarTanks Mobile</h1>
+    <div class="score">Уничтожено врагов: <span id="scoreVal">0</span></div>
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+    <div class="controls">
+        <div></div>
+        <button onclick="moveUp()">⬆️</button>
+        <div></div>
+        <button onclick="moveLeft()">⬅️</button>
+        <button onclick="fireBullet()">🔥</button>
+        <button onclick="moveRight()">➡️</button>
+        <div></div>
+        <button onclick="moveDown()">⬇️</button>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreVal = document.getElementById('scoreVal');
+
+    let score = 0;
+
+    let tank = {
+        x: 400,
+        y: 250,
+        size: 30,
+        speed: 3,
+        angle: 0,
+        color: '#4CAF50'
+    };
+
+    let bullets = [];
+    let enemies = [];
+
+    let keys = {};
+
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function moveUp() { tank.y -= tank.speed * 4; tank.angle = -Math.PI / 2; }
+    function moveDown() { tank.y += tank.speed * 4; tank.angle = Math.PI / 2; }
+    function moveLeft() { tank.x -= tank.speed * 4; tank.angle = Math.PI; }
+    function moveRight() { tank.x += tank.speed * 4; tank.angle = 0; }
+
+    function fireBullet() {
+        bullets.push({
+            x: tank.x + Math.cos(tank.angle) * 20,
+            y: tank.y + Math.sin(tank.angle) * 20,
+            dx: Math.cos(tank.angle) * 6,
+            dy: Math.sin(tank.angle) * 6,
+            size: 4
+        });
+    }
+
+    window.addEventListener('keydown', e => {
+        if (e.code === 'Space') fireBullet();
+    });
+
+    function spawnEnemy() {
+        if (enemies.length < 3) {
+            let edge = Math.floor(Math.random() * 4);
+            let ex, ey;
+            if (edge === 0) { ex = Math.random() * canvas.width; ey = -20; }
+            else if (edge === 1) { ex = Math.random() * canvas.width; ey = canvas.height + 20; }
+            else if (edge === 2) { ex = -20; ey = Math.random() * canvas.height; }
+            else { ex = canvas.width + 20; ey = Math.random() * canvas.height; }
+
+            enemies.push({ x: ex, y: ey, size: 26, speed: 1.2, color: '#E53935' });
+        }
+    }
+
+    function update() {
+        // Управление с ПК
+        if (keys['KeyW'] || keys['ArrowUp']) { tank.y -= tank.speed; tank.angle = -Math.PI / 2; }
+        if (keys['KeyS'] || keys['ArrowDown']) { tank.y += tank.speed; tank.angle = Math.PI / 2; }
+        if (keys['KeyA'] || keys['ArrowLeft']) { tank.x -= tank.speed; tank.angle = Math.PI; }
+        if (keys['KeyD'] || keys['ArrowRight']) { tank.x += tank.speed; tank.angle = 0; }
+
+        // Ограничения экрана
+        tank.x = Math.max(tank.size, Math.min(canvas.width - tank.size, tank.x));
+        tank.y = Math.max(tank.size, Math.min(canvas.height - tank.size, tank.y));
+
+        // Движение пуль
+        bullets.forEach((b, index) => {
+            b.x += b.dx;
+            b.y += b.dy;
+            if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+                bullets.splice(index, 1);
+            }
+        });
+
+        // Логика врагов
+        enemies.forEach((e, eIndex) => {
+            let angle = Math.atan2(tank.y - e.y, tank.x - e.x);
+            e.x += Math.cos(angle) * e.speed;
+            e.y += Math.sin(angle) * e.speed;
+
+            // Столкновение с игроком
+            let distToPlayer = Math.hypot(tank.x - e.x, tank.y - e.y);
+            if (distToPlayer < tank.size / 2 + e.size / 2) {
+                alert('Игра окончена! Счёт: ' + score);
+                score = 0;
+                enemies = [];
+                tank.x = 400;
+                tank.y = 250;
+            }
+
+            // Попадание пули во врага
+            bullets.forEach((b, bIndex) => {
+                let dist = Math.hypot(b.x - e.x, b.y - e.y);
+                if (dist < e.size / 2) {
+                    enemies.splice(eIndex, 1);
+                    bullets.splice(bIndex, 1);
+                    score++;
+                    scoreVal.innerText = score;
+                }
+            });
+        });
+
+        spawnEnemy();
+    }
+
+    function drawTank(t) {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.angle);
+        
+        // Корпус
+        ctx.fillStyle = t.color;
+        ctx.fillRect(-t.size/2, -t.size/2.5, t.size, t.size/1.25);
+        
+        // Гусеницы
+        ctx.fillStyle = '#111';
+        ctx.fillRect(-t.size/2, -t.size/2, t.size, 6);
+        ctx.fillRect(-t.size/2, t.size/2 - 6, t.size, 6);
+
+        // Башня и дуло
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, -3, t.size/1.2, 6);
+        ctx.beginPath();
+        ctx.arc(0, 0, t.size/2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Рисуем игрока
+        drawTank(tank);
+
+        // Рисуем пули
+        ctx.fillStyle = '#FFEB3B';
+        bullets.forEach(b => {
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Рисуем врагов
+        enemies.forEach(e => drawTank(e));
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    loop();
+</script>
+</body>
+</html>
