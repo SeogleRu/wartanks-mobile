@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WarTanks Mobile - Танковое Сражение в браузере</title>
+    <title>WarTanks Mobile - Танковое Сражение прямо в браузере</title>
     <style>
         body {
             margin: 0;
@@ -13,6 +13,8 @@
             font-family: sans-serif;
             overflow: hidden;
             touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         #gameCanvas {
@@ -22,10 +24,11 @@
             box-shadow: 0 0 20px rgba(0,0,0,0.8);
         }
 
+        /* Мобильный интерфейс */
         .mobile-ui {
             display: none;
             position: absolute;
-            bottom: 30px;
+            bottom: 40px;
             width: 100%;
             justify-content: space-between;
             padding: 0 40px;
@@ -33,29 +36,42 @@
             pointer-events: none;
         }
 
+        /* КРУГЛАЯ ЗОНА ДЖОЙСТИКА */
         .joystick-container {
-            width: 120px;
-            height: 120px;
-            background: rgba(255, 255, 255, 0.2);
+            width: 140px;
+            height: 140px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 3px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
             position: relative;
             pointer-events: auto;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
         }
 
+        /* КРУГЛАЯ РУЧКА ДЖОЙСТИКА */
         .joystick-handle {
-            width: 50px;
-            height: 50px;
-            background: rgba(255, 255, 255, 0.6);
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.7);
             border-radius: 50%;
             position: absolute;
-            top: 35px;
-            left: 35px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            transition: background 0.1s;
         }
 
+        .joystick-container:active .joystick-handle {
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        /* КНОПКА ОГНЯ */
         .fire-button {
-            width: 90px;
-            height: 90px;
-            background: rgba(255, 0, 0, 0.6);
+            width: 100px;
+            height: 100px;
+            background: rgba(255, 50, 50, 0.6);
             border-radius: 50%;
             color: white;
             font-weight: bold;
@@ -63,13 +79,16 @@
             align-items: center;
             justify-content: center;
             pointer-events: auto;
-            user-select: none;
             border: 4px solid rgba(255,255,255,0.4);
-            font-size: 18px;
+            font-size: 20px;
+            text-transform: uppercase;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            box-sizing: border-box;
         }
 
         .fire-button:active {
-            background: rgba(255, 0, 0, 0.9);
+            background: rgba(255, 50, 50, 0.9);
+            transform: scale(0.95);
         }
 
         #scoreBoard {
@@ -81,8 +100,10 @@
             font-weight: bold;
             text-shadow: 2px 2px 4px #000;
             pointer-events: none;
+            white-space: nowrap;
         }
 
+        /* Включение мобильного UI на тач-экранах */
         @media (pointer: coarse) {
             .mobile-ui {
                 display: flex;
@@ -135,16 +156,15 @@
     const enemies = [];
     const enemySpawnRate = 2000;
     let lastEnemySpawn = 0;
-
     const explosions = [];
 
     window.addEventListener('keydown', (e) => { 
-        const key = e.key.toLowerCase();
-        if (key in keys) keys[key] = true; 
+        const k = e.key.toLowerCase();
+        if (k in keys) keys[k] = true; 
     });
     window.addEventListener('keyup', (e) => { 
-        const key = e.key.toLowerCase();
-        if (key in keys) keys[key] = false; 
+        const k = e.key.toLowerCase();
+        if (k in keys) keys[k] = false; 
     });
     
     window.addEventListener('mousemove', (e) => {
@@ -156,6 +176,7 @@
     
     window.addEventListener('mousedown', () => { playerShoot(); });
 
+    // --- КОРРЕКТНЫЙ КРУГЛЫЙ ДЖОЙСТИК ---
     const joystick = document.getElementById('joystick');
     const handle = document.getElementById('handle');
     const fireBtn = document.getElementById('fireBtn');
@@ -165,43 +186,66 @@
     let joystickStartY = 0;
     let moveVector = { x: 0, y: 0 };
 
-    joystick.addEventListener('touchstart', (e) => {
+    // Расчет центра контейнера при касании
+    function handleJoystickStart(e) {
+        e.preventDefault();
         joystickActive = true;
         const rect = joystick.getBoundingClientRect();
+        // Центр круга-основания джойстика
         joystickStartX = rect.left + rect.width / 2;
         joystickStartY = rect.top + rect.height / 2;
-    });
+        handleJoystickMove(e);
+    }
 
-    joystick.addEventListener('touchmove', (e) => {
+    function handleJoystickMove(e) {
         if (!joystickActive) return;
+        e.preventDefault();
+        
         const touch = e.touches[0];
         
+        // Смещение пальца относительно точного центра джойстика
         let dx = touch.clientX - joystickStartX;
         let dy = touch.clientY - joystickStartY;
-        const distance = Math.min(Math.sqrt(dx * dx + dy * dy), 40);
         
-        const angle = Math.atan2(dy, dx);
-        const handleX = Math.cos(angle) * distance;
-        const handleY = Math.sin(angle) * distance;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const maxRadius = 40; // Максимальный вылет ручки за пределы центра
 
+        let angle = Math.atan2(dy, dx);
+        
+        // Ограничиваем движение строго внутри окружности радиуса maxRadius
+        let finalDistance = Math.min(distance, maxRadius);
+        
+        let handleX = Math.cos(angle) * finalDistance;
+        let handleY = Math.sin(angle) * finalDistance;
+
+        // Физическое смещение круглой ручки через transform: translate
         handle.style.transform = `translate(${handleX}px, ${handleY}px)`;
 
-        moveVector.x = Math.cos(angle) * (distance / 40);
-        moveVector.y = Math.sin(angle) * (distance / 40);
+        // Нормализованный вектор для движения танка (от 0 до 1)
+        moveVector.x = Math.cos(angle) * (finalDistance / maxRadius);
+        moveVector.y = Math.sin(angle) * (finalDistance / maxRadius);
         
         player.turretAngle = angle; 
-    });
+    }
 
-    joystick.addEventListener('touchend', () => {
+    function handleJoystickEnd(e) {
+        e.preventDefault();
         joystickActive = false;
+        // Возвращаем ручку ровно в центр круглого контейнера
         handle.style.transform = 'translate(0px, 0px)';
         moveVector = { x: 0, y: 0 };
-    });
+    }
+
+    joystick.addEventListener('touchstart', handleJoystickStart, {passive: false});
+    joystick.addEventListener('touchmove', handleJoystickMove, {passive: false});
+    joystick.addEventListener('touchend', handleJoystickEnd, {passive: false});
+    joystick.addEventListener('touchcancel', handleJoystickEnd, {passive: false});
 
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         playerShoot();
-    });
+    }, {passive: false});
+
 
     function playerShoot() {
         const now = Date.now();
@@ -383,7 +427,7 @@
             ctx.textAlign = 'center';
             ctx.fillText('ИГРА ОКОНЧЕНА', canvas.width / 2, canvas.height / 2 - 20);
             ctx.font = '24px sans-serif';
-            ctx.fillText('Кликните для рестарта', canvas.width / 2, canvas.height / 2 + 30);
+            ctx.fillText('Нажмите в любом месте для рестарта', canvas.width / 2, canvas.height / 2 + 30);
         }
     }
 
