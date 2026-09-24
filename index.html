@@ -3,230 +3,403 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WarTanks Mobile</title>
+    <title>WarTanks Mobile - Танковое Сражение в браузере</title>
     <style>
         body {
             margin: 0;
-            background: #222;
+            padding: 0;
+            background-color: #222;
             color: #fff;
             font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
             overflow: hidden;
             touch-action: none;
         }
-        canvas {
-            background: #557a46;
+
+        #gameCanvas {
+            display: block;
+            background: #3e5234;
+            margin: 0 auto;
             box-shadow: 0 0 20px rgba(0,0,0,0.8);
-            max-width: 100%;
-            max-height: 70vh;
         }
-        .controls {
+
+        .mobile-ui {
             display: none;
-            margin-top: 15px;
-            grid-template-columns: repeat(3, 60px);
-            gap: 10px;
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            justify-content: space-between;
+            padding: 0 40px;
+            box-sizing: border-box;
+            pointer-events: none;
         }
-        .controls button {
-            height: 60px;
-            font-size: 20px;
-            background: #444;
+
+        .joystick-container {
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            position: relative;
+            pointer-events: auto;
+        }
+
+        .joystick-handle {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            position: absolute;
+            top: 35px;
+            left: 35px;
+        }
+
+        .fire-button {
+            width: 90px;
+            height: 90px;
+            background: rgba(255, 0, 0, 0.6);
+            border-radius: 50%;
             color: white;
-            border: 2px solid #666;
-            border-radius: 10px;
-            outline: none;
-        }
-        .controls button:active {
-            background: #666;
-        }
-        .fire-btn {
-            grid-column: span 3;
-            background: #a00 !important;
-        }
-        @media (pointer: coarse) {
-            .controls { display: grid; }
-        }
-        .score {
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            user-select: none;
+            border: 4px solid rgba(255,255,255,0.4);
             font-size: 18px;
-            margin-bottom: 10px;
+        }
+
+        .fire-button:active {
+            background: rgba(255, 0, 0, 0.9);
+        }
+
+        #scoreBoard {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px #000;
+            pointer-events: none;
+        }
+
+        @media (pointer: coarse) {
+            .mobile-ui {
+                display: flex;
+            }
         }
     </style>
 </head>
 <body>
 <h1>WarTanks Mobile</h1>
-    <div class="score">Уничтожено врагов: <span id="scoreVal">0</span></div>
-    <canvas id="gameCanvas" width="800" height="500"></canvas>
+    <div id="scoreBoard">Счет: <span id="score">0</span> | Жизни: <span id="lives">3</span></div>
+    <canvas id="gameCanvas"></canvas>
 
-    <div class="controls">
-        <div></div>
-        <button onclick="moveUp()">⬆️</button>
-        <div></div>
-        <button onclick="moveLeft()">⬅️</button>
-        <button onclick="fireBullet()">🔥</button>
-        <button onclick="moveRight()">➡️</button>
-        <div></div>
-        <button onclick="moveDown()">⬇️</button>
+    <div class="mobile-ui">
+        <div class="joystick-container" id="joystick">
+            <div class="joystick-handle" id="handle"></div>
+        </div>
+        <div class="fire-button" id="fireBtn">огонь</div>
     </div>
 
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    const scoreVal = document.getElementById('scoreVal');
+    
+    function resizeCanvas() {
+        canvas.width = window.innerWidth > 1024 ? 1024 : window.innerWidth;
+        canvas.height = window.innerHeight > 600 ? 600 : window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     let score = 0;
+    let lives = 3;
+    let gameOver = false;
 
-    let tank = {
-        x: 400,
-        y: 250,
+    const keys = { w: false, a: false, s: false, d: false, arrowup: false, arrowdown: false, arrowleft: false, arrowright: false };
+
+    const player = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
         size: 30,
         speed: 3,
         angle: 0,
-        color: '#4CAF50'
+        turretAngle: 0,
+        color: '#4CAF50',
+        bullets: [],
+        lastShot: 0,
+        shotDelay: 400
     };
 
-    let bullets = [];
-    let enemies = [];
+    const enemies = [];
+    const enemySpawnRate = 2000;
+    let lastEnemySpawn = 0;
 
-    let keys = {};
+    const explosions = [];
 
-    window.addEventListener('keydown', e => keys[e.code] = true);
-    window.addEventListener('keyup', e => keys[e.code] = false);
+    window.addEventListener('keydown', (e) => { 
+        const key = e.key.toLowerCase();
+        if (key in keys) keys[key] = true; 
+    });
+    window.addEventListener('keyup', (e) => { 
+        const key = e.key.toLowerCase();
+        if (key in keys) keys[key] = false; 
+    });
+    
+    window.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        player.turretAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    });
+    
+    window.addEventListener('mousedown', () => { playerShoot(); });
 
-    function moveUp() { tank.y -= tank.speed * 4; tank.angle = -Math.PI / 2; }
-    function moveDown() { tank.y += tank.speed * 4; tank.angle = Math.PI / 2; }
-    function moveLeft() { tank.x -= tank.speed * 4; tank.angle = Math.PI; }
-    function moveRight() { tank.x += tank.speed * 4; tank.angle = 0; }
+    const joystick = document.getElementById('joystick');
+    const handle = document.getElementById('handle');
+    const fireBtn = document.getElementById('fireBtn');
+    
+    let joystickActive = false;
+    let joystickStartX = 0;
+    let joystickStartY = 0;
+    let moveVector = { x: 0, y: 0 };
 
-    function fireBullet() {
-        bullets.push({
-            x: tank.x + Math.cos(tank.angle) * 20,
-            y: tank.y + Math.sin(tank.angle) * 20,
-            dx: Math.cos(tank.angle) * 6,
-            dy: Math.sin(tank.angle) * 6,
-            size: 4
-        });
-    }
-
-    window.addEventListener('keydown', e => {
-        if (e.code === 'Space') fireBullet();
+    joystick.addEventListener('touchstart', (e) => {
+        joystickActive = true;
+        const rect = joystick.getBoundingClientRect();
+        joystickStartX = rect.left + rect.width / 2;
+        joystickStartY = rect.top + rect.height / 2;
     });
 
-    function spawnEnemy() {
-        if (enemies.length < 3) {
-            let edge = Math.floor(Math.random() * 4);
-            let ex, ey;
-            if (edge === 0) { ex = Math.random() * canvas.width; ey = -20; }
-            else if (edge === 1) { ex = Math.random() * canvas.width; ey = canvas.height + 20; }
-            else if (edge === 2) { ex = -20; ey = Math.random() * canvas.height; }
-            else { ex = canvas.width + 20; ey = Math.random() * canvas.height; }
+    joystick.addEventListener('touchmove', (e) => {
+        if (!joystickActive) return;
+        const touch = e.touches[0];
+        
+        let dx = touch.clientX - joystickStartX;
+        let dy = touch.clientY - joystickStartY;
+        const distance = Math.min(Math.sqrt(dx * dx + dy * dy), 40);
+        
+        const angle = Math.atan2(dy, dx);
+        const handleX = Math.cos(angle) * distance;
+        const handleY = Math.sin(angle) * distance;
 
-            enemies.push({ x: ex, y: ey, size: 26, speed: 1.2, color: '#E53935' });
+        handle.style.transform = `translate(${handleX}px, ${handleY}px)`;
+
+        moveVector.x = Math.cos(angle) * (distance / 40);
+        moveVector.y = Math.sin(angle) * (distance / 40);
+        
+        player.turretAngle = angle; 
+    });
+
+    joystick.addEventListener('touchend', () => {
+        joystickActive = false;
+        handle.style.transform = 'translate(0px, 0px)';
+        moveVector = { x: 0, y: 0 };
+    });
+
+    fireBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        playerShoot();
+    });
+
+    function playerShoot() {
+        const now = Date.now();
+        if (now - player.lastShot > player.shotDelay && !gameOver) {
+            player.bullets.push({
+                x: player.x + Math.cos(player.turretAngle) * 25,
+                y: player.y + Math.sin(player.turretAngle) * 25,
+                vx: Math.cos(player.turretAngle) * 7,
+                vy: Math.sin(player.turretAngle) * 7
+            });
+            player.lastShot = now;
         }
     }
 
+    function spawnEnemy() {
+        if (enemies.length >= 5) return;
+
+        let x, y;
+        if (Math.random() < 0.5) {
+            x = Math.random() < 0.5 ? -30 : canvas.width + 30;
+            y = Math.random() * canvas.height;
+        } else {
+            x = Math.random() * canvas.width;
+            y = Math.random() < 0.5 ? -30 : canvas.height + 30;
+        }
+
+        enemies.push({
+            x: x,
+            y: y,
+            size: 28,
+            speed: 1 + Math.random() * 1,
+            angle: 0,
+            color: '#E53935'
+        });
+    }
+
+    function createExplosion(x, y) {
+        explosions.push({ x: x, y: y, radius: 5, maxRadius: 30, alpha: 1 });
+    }
+
     function update() {
-        // Управление с ПК
-        if (keys['KeyW'] || keys['ArrowUp']) { tank.y -= tank.speed; tank.angle = -Math.PI / 2; }
-        if (keys['KeyS'] || keys['ArrowDown']) { tank.y += tank.speed; tank.angle = Math.PI / 2; }
-        if (keys['KeyA'] || keys['ArrowLeft']) { tank.x -= tank.speed; tank.angle = Math.PI; }
-        if (keys['KeyD'] || keys['ArrowRight']) { tank.x += tank.speed; tank.angle = 0; }
+        if (gameOver) return;
 
-        // Ограничения экрана
-        tank.x = Math.max(tank.size, Math.min(canvas.width - tank.size, tank.x));
-        tank.y = Math.max(tank.size, Math.min(canvas.height - tank.size, tank.y));
+        let kx = 0;
+        let ky = 0;
+        if (keys.w || keys.arrowup) ky = -1;
+        if (keys.s || keys.arrowdown) ky = 1;
+        if (keys.a || keys.arrowleft) kx = -1;
+        if (keys.d || keys.arrowright) kx = 1;
 
-        // Движение пуль
-        bullets.forEach((b, index) => {
-            b.x += b.dx;
-            b.y += b.dy;
+        if (kx !== 0 || ky !== 0) {
+            player.x += kx * player.speed;
+            player.y += ky * player.speed;
+            player.angle = Math.atan2(ky, kx);
+        } 
+        else if (joystickActive) {
+            player.x += moveVector.x * player.speed;
+            player.y += moveVector.y * player.speed;
+            player.angle = Math.atan2(moveVector.y, moveVector.x);
+        }
+
+        player.x = Math.max(player.size, Math.min(canvas.width - player.size, player.x));
+        player.y = Math.max(player.size, Math.min(canvas.height - player.size, player.y));
+
+        player.bullets.forEach((b, index) => {
+            b.x += b.vx;
+            b.y += b.vy;
             if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                bullets.splice(index, 1);
+                player.bullets.splice(index, 1);
             }
         });
 
-        // Логика врагов
-        enemies.forEach((e, eIndex) => {
-            let angle = Math.atan2(tank.y - e.y, tank.x - e.x);
-            e.x += Math.cos(angle) * e.speed;
-            e.y += Math.sin(angle) * e.speed;
+        const now = Date.now();
+        if (now - lastEnemySpawn > enemySpawnRate) {
+            spawnEnemy();
+            lastEnemySpawn = now;
+        }
 
-            // Столкновение с игроком
-            let distToPlayer = Math.hypot(tank.x - e.x, tank.y - e.y);
-            if (distToPlayer < tank.size / 2 + e.size / 2) {
-                alert('Игра окончена! Счёт: ' + score);
-                score = 0;
-                enemies = [];
-                tank.x = 400;
-                tank.y = 250;
+        enemies.forEach((enemy, eIndex) => {
+            const dx = player.x - enemy.x;
+            const dy = player.y - enemy.y;
+            enemy.angle = Math.atan2(dy, dx);
+
+            enemy.x += Math.cos(enemy.angle) * enemy.speed;
+            enemy.y += Math.sin(enemy.angle) * enemy.speed;
+
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < player.size + enemy.size) {
+                createExplosion(enemy.x, enemy.y);
+                enemies.splice(eIndex, 1);
+                lives--;
+                document.getElementById('lives').innerText = lives;
+                if (lives <= 0) {
+                    gameOver = true;
+                }
             }
 
-            // Попадание пули во врага
-            bullets.forEach((b, bIndex) => {
-                let dist = Math.hypot(b.x - e.x, b.y - e.y);
-                if (dist < e.size / 2) {
+            player.bullets.forEach((bullet, bIndex) => {
+                const bDx = bullet.x - enemy.x;
+                const bDy = bullet.y - enemy.y;
+                const bDist = Math.sqrt(bDx*bDx + bDy*bDy);
+
+                if (bDist < enemy.size) {
+                    createExplosion(enemy.x, enemy.y);
                     enemies.splice(eIndex, 1);
-                    bullets.splice(bIndex, 1);
-                    score++;
-                    scoreVal.innerText = score;
+                    player.bullets.splice(bIndex, 1);
+                    score += 10;
+                    document.getElementById('score').innerText = score;
                 }
             });
         });
 
-        spawnEnemy();
+        explosions.forEach((exp, index) => {
+            exp.radius += 2;
+            exp.alpha -= 0.05;
+            if (exp.alpha <= 0) explosions.splice(index, 1);
+        });
     }
 
-    function drawTank(t) {
+    function drawTank(x, y, bodyAngle, turretAngle, color) {
         ctx.save();
-        ctx.translate(t.x, t.y);
-        ctx.rotate(t.angle);
-        
-        // Корпус
-        ctx.fillStyle = t.color;
-        ctx.fillRect(-t.size/2, -t.size/2.5, t.size, t.size/1.25);
-        
-        // Гусеницы
-        ctx.fillStyle = '#111';
-        ctx.fillRect(-t.size/2, -t.size/2, t.size, 6);
-        ctx.fillRect(-t.size/2, t.size/2 - 6, t.size, 6);
+        ctx.translate(x, y);
 
-        // Башня и дуло
+        ctx.rotate(bodyAngle);
+        ctx.fillStyle = color;
+        ctx.fillRect(-18, -15, 36, 30);
         ctx.fillStyle = '#333';
-        ctx.fillRect(0, -3, t.size/1.2, 6);
-        ctx.beginPath();
-        ctx.arc(0, 0, t.size/2.2, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(-22, -18, 44, 5);
+        ctx.fillRect(-22, 13, 44, 5);
+        ctx.restore();
 
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(turretAngle);
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(22, 0);
+        ctx.stroke();
         ctx.restore();
     }
 
-    function draw() {
+    function render() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Рисуем игрока
-        drawTank(tank);
+        drawTank(player.x, player.y, player.angle, player.turretAngle, player.color);
 
-        // Рисуем пули
+        enemies.forEach(enemy => {
+            drawTank(enemy.x, enemy.y, enemy.angle, enemy.angle, enemy.color);
+        });
+
         ctx.fillStyle = '#FFEB3B';
-        bullets.forEach(b => {
+        player.bullets.forEach(b => {
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+            ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
             ctx.fill();
         });
 
-        // Рисуем врагов
-        enemies.forEach(e => drawTank(e));
+        explosions.forEach(exp => {
+            ctx.save();
+            ctx.globalAlpha = exp.alpha;
+            ctx.fillStyle = '#FF5722';
+            ctx.beginPath();
+            ctx.arc(exp.x, exp.y, exp.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        });
+
+        if (gameOver) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#fff';
+            ctx.font = '48px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('ИГРА ОКОНЧЕНА', canvas.width / 2, canvas.height / 2 - 20);
+            ctx.font = '24px sans-serif';
+            ctx.fillText('Кликните для рестарта', canvas.width / 2, canvas.height / 2 + 30);
+        }
     }
 
-    function loop() {
+    window.addEventListener('click', () => {
+        if (gameOver) {
+            document.location.reload();
+        }
+    });
+
+    function gameLoop() {
         update();
-        draw();
-        requestAnimationFrame(loop);
+        render();
+        requestAnimationFrame(gameLoop);
     }
 
-    loop();
+    gameLoop();
 </script>
 </body>
 </html>
